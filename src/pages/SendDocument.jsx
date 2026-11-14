@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 import PdfFieldEditor from '../components/PdfFieldEditor';
+import api from '../services/api';
 
 export default function SendDocument({ onBack }) {
   const [file, setFile] = useState(null);
@@ -23,12 +24,15 @@ export default function SendDocument({ onBack }) {
   const [clientName, setClientName] = useState('');
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
+
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const [previewUrl, setPreviewUrl] = useState('');
   const [fields, setFields] = useState([]);
 
-  // Create and clean up the PDF preview URL.
+  // Create and clean up PDF preview URL.
   useEffect(() => {
     if (!file) {
       setPreviewUrl('');
@@ -74,7 +78,7 @@ export default function SendDocument({ onBack }) {
     );
   };
 
-  // Remove the currently selected PDF.
+  // Remove the selected PDF.
   const handleRemoveDocument = () => {
     const confirmed = window.confirm(
       'Are you sure you want to remove this document? All signature and date placements will also be cleared.'
@@ -89,7 +93,8 @@ export default function SendDocument({ onBack }) {
     setError('');
   };
 
-  const handleSubmit = (e) => {
+  // Upload PDF and send signing invitation.
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -98,17 +103,70 @@ export default function SendDocument({ onBack }) {
       return;
     }
 
-    if (!documentTitle.trim() || !clientName.trim() || !email.trim()) {
+    if (
+      !documentTitle.trim() ||
+      !clientName.trim() ||
+      !email.trim()
+    ) {
       setError('Please complete all required fields.');
       return;
     }
 
-    // Frontend validation only.
-    // Actual upload and email delivery require backend integration.
-    setSuccess(true);
+    try {
+      setIsSubmitting(true);
+
+      // STEP 1: Upload PDF to backend.
+      const uploadData = new FormData();
+
+      uploadData.append('file', file);
+      uploadData.append('title', documentTitle.trim());
+
+      const uploadResponse = await api.post(
+        '/documents/upload',
+        uploadData
+      );
+
+      const documentId = uploadResponse.data.id;
+
+      if (!documentId) {
+        throw new Error(
+          'PDF uploaded, but the backend did not return a document ID.'
+        );
+      }
+
+      // STEP 2: Create invitation and send email.
+      const invitationResponse = await api.post(
+        `/signatures/invite/${documentId}`,
+        {
+          recipient_email: email.trim(),
+          fields: fields
+        }
+      );
+
+      if (invitationResponse.data.email_sent !== true) {
+        throw new Error(
+          'Invitation was created, but email delivery was not confirmed.'
+        );
+      }
+
+      // STEP 3: Display success only after email confirmation.
+      setSuccess(true);
+
+    } catch (err) {
+      console.error('Send Document Error:', err);
+
+      setError(
+        err.response?.data?.detail ||
+        err.message ||
+        'Unable to send document. Please try again.'
+      );
+
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Reset the form so another document can be selected.
+  // Reset form.
   const resetForm = () => {
     setFile(null);
     setDocumentTitle('');
@@ -118,6 +176,7 @@ export default function SendDocument({ onBack }) {
     setError('');
     setSuccess(false);
     setFields([]);
+    setIsSubmitting(false);
   };
 
   return (
@@ -149,21 +208,40 @@ export default function SendDocument({ onBack }) {
         </div>
 
         {success ? (
+
+          // SUCCESS SCREEN
           <div className="bg-white border border-green-200 rounded-2xl p-10 text-center">
+
             <ShieldCheck
               size={55}
               className="text-green-600 mx-auto mb-5"
             />
 
             <h2 className="text-2xl font-bold text-slate-900">
-              Form Completed!
+              Invitation Sent Successfully!
             </h2>
 
             <p className="text-slate-500 mt-3">
-              Your document details passed frontend validation.
-              The document has not yet been uploaded or emailed.
-              Backend integration is required for actual delivery.
+              Your document has been uploaded successfully, and the signing invitation has been sent to {email}.
             </p>
+
+            <div className="mt-6 bg-green-50 border border-green-200 rounded-xl p-4 text-left">
+              <p className="text-sm text-green-800 font-semibold">
+                Document: {documentTitle}
+              </p>
+
+              <p className="text-sm text-green-700 mt-1">
+                Recipient: {clientName}
+              </p>
+
+              <p className="text-sm text-green-700 mt-1">
+                Email: {email}
+              </p>
+
+              <p className="text-sm text-green-700 mt-1">
+                Status: Invitation sent
+              </p>
+            </div>
 
             <button
               onClick={resetForm}
@@ -171,12 +249,17 @@ export default function SendDocument({ onBack }) {
             >
               Add Another Document
             </button>
+
           </div>
+
         ) : (
+
+          // MAIN FORM
           <form onSubmit={handleSubmit} className="space-y-6">
 
             {/* DOCUMENT INFORMATION */}
             <div className="bg-white border border-slate-200 rounded-2xl p-7">
+
               <h2 className="font-bold text-lg mb-2">
                 Document Information
               </h2>
@@ -198,9 +281,11 @@ export default function SendDocument({ onBack }) {
                 className="w-full border border-slate-200 rounded-xl p-3 mb-6 outline-none focus:border-blue-500"
               />
 
-              {/* SHOW UPLOAD AREA ONLY WHEN NO PDF IS SELECTED */}
+              {/* PDF UPLOAD */}
               {!file ? (
+
                 <label className="border-2 border-dashed border-slate-300 rounded-xl p-8 flex flex-col items-center cursor-pointer hover:border-blue-500 hover:bg-blue-50/30 transition">
+
                   <Upload size={35} className="text-blue-600 mb-3" />
 
                   <span className="font-semibold text-slate-700">
@@ -217,13 +302,18 @@ export default function SendDocument({ onBack }) {
                     className="hidden"
                     onChange={handleFileChange}
                   />
+
                 </label>
+
               ) : (
-                /* SHOW SELECTED DOCUMENT INSTEAD OF UPLOAD AREA */
+
+                // SELECTED DOCUMENT
                 <div className="border border-blue-200 bg-blue-50/50 rounded-xl p-5">
+
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
 
                     <div className="flex items-center gap-3 min-w-0">
+
                       <div className="bg-white p-3 rounded-xl border border-blue-100">
                         <FileCheck
                           size={28}
@@ -232,6 +322,7 @@ export default function SendDocument({ onBack }) {
                       </div>
 
                       <div className="min-w-0">
+
                         <p className="font-semibold text-slate-800">
                           Document Selected
                         </p>
@@ -243,10 +334,13 @@ export default function SendDocument({ onBack }) {
                         <p className="text-xs text-slate-400 mt-1">
                           {(file.size / (1024 * 1024)).toFixed(2)} MB
                         </p>
+
                       </div>
+
                     </div>
 
                     <div className="flex items-center gap-2">
+
                       <span className="text-xs font-semibold text-green-700 bg-green-100 px-3 py-2 rounded-lg">
                         Ready
                       </span>
@@ -259,29 +353,33 @@ export default function SendDocument({ onBack }) {
                         <X size={17} />
                         Remove
                       </button>
+
                     </div>
 
                   </div>
 
                   <p className="text-xs text-slate-500 mt-4">
-                    One document can be active at a time. Remove this
-                    document if you want to select another PDF.
+                    One document can be active at a time. Remove this document if you want to select another PDF.
                   </p>
+
                 </div>
               )}
 
               {/* PDF FIELD EDITOR */}
               {file && (
+
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 mt-6">
+
                   <div className="mb-5">
+
                     <h2 className="font-bold text-lg">
                       Place Signature and Date Fields
                     </h2>
 
                     <p className="text-sm text-slate-500 mt-2">
-                      Add fields to your PDF, then drag or resize them
-                      to position them correctly.
+                      Add fields to your PDF, then drag or resize them to position them correctly.
                     </p>
+
                   </div>
 
                   <PdfFieldEditor
@@ -290,19 +388,25 @@ export default function SendDocument({ onBack }) {
                     onFieldsChange={setFields}
                     editable={true}
                   />
+
                 </div>
               )}
+
             </div>
 
             {/* PDF PREVIEW */}
             {previewUrl && (
+
               <div className="bg-white border border-slate-200 rounded-2xl p-6">
+
                 <div className="flex items-center gap-2 mb-4">
+
                   <Eye className="text-blue-600" size={20} />
 
                   <h2 className="font-bold text-lg">
                     PDF Preview
                   </h2>
+
                 </div>
 
                 <iframe
@@ -314,11 +418,13 @@ export default function SendDocument({ onBack }) {
                 <p className="text-xs text-slate-500 mt-3">
                   Preview of the PDF selected on this device.
                 </p>
+
               </div>
             )}
 
             {/* CLIENT INFORMATION */}
             <div className="bg-white border border-slate-200 rounded-2xl p-7">
+
               <h2 className="font-bold text-lg mb-2">
                 Client Information
               </h2>
@@ -329,12 +435,15 @@ export default function SendDocument({ onBack }) {
 
               <div className="space-y-5">
 
+                {/* CLIENT NAME */}
                 <div>
+
                   <label className="block text-sm font-semibold mb-2">
                     Client Full Name
                   </label>
 
                   <div className="relative">
+
                     <User
                       className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
                       size={19}
@@ -347,15 +456,20 @@ export default function SendDocument({ onBack }) {
                       placeholder="Enter client's full name"
                       className="w-full border border-slate-200 rounded-xl py-3 pl-12 pr-4 outline-none focus:border-blue-500"
                     />
+
                   </div>
+
                 </div>
 
+                {/* EMAIL */}
                 <div>
+
                   <label className="block text-sm font-semibold mb-2">
                     Email Address
                   </label>
 
                   <div className="relative">
+
                     <Mail
                       className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
                       size={19}
@@ -369,15 +483,20 @@ export default function SendDocument({ onBack }) {
                       placeholder="client@example.com"
                       className="w-full border border-slate-200 rounded-xl py-3 pl-12 pr-4 outline-none focus:border-blue-500"
                     />
+
                   </div>
+
                 </div>
 
+                {/* PERSONAL MESSAGE */}
                 <div>
+
                   <label className="block text-sm font-semibold mb-2">
                     Personal Message (Optional)
                   </label>
 
                   <div className="relative">
+
                     <MessageSquare
                       className="absolute left-4 top-4 text-slate-400"
                       size={19}
@@ -390,31 +509,45 @@ export default function SendDocument({ onBack }) {
                       rows={4}
                       className="w-full border border-slate-200 rounded-xl py-3 pl-12 pr-4 outline-none focus:border-blue-500 resize-none"
                     />
+
                   </div>
+
                 </div>
 
               </div>
+
             </div>
 
             {/* ERROR MESSAGE */}
             {error && (
+
               <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-4 text-sm">
                 {error}
               </div>
+
             )}
 
             {/* SUBMIT BUTTON */}
             <div className="flex justify-end">
+
               <button
                 type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3.5 rounded-xl font-semibold flex items-center gap-2"
+                disabled={isSubmitting}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-8 py-3.5 rounded-xl font-semibold flex items-center gap-2"
               >
+
                 <Send size={18} />
-                Continue
+
+                {isSubmitting
+                  ? 'Uploading and Sending...'
+                  : 'Send Document'}
+
               </button>
+
             </div>
 
           </form>
+
         )}
 
       </div>

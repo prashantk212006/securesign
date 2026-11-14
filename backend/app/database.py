@@ -1,7 +1,6 @@
 
 import sqlite3
 from pathlib import Path
-from contextlib import contextmanager
 
 DB_PATH = Path(__file__).resolve().parent.parent / "securesign.db"
 
@@ -29,6 +28,7 @@ def init_db():
             title TEXT NOT NULL,
             filename TEXT NOT NULL,
             file_path TEXT NOT NULL,
+            signed_file_path TEXT,
             status TEXT DEFAULT 'Pending',
             owner_id INTEGER NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -43,6 +43,7 @@ def init_db():
             expires_at TIMESTAMP NOT NULL,
             used_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            fields_json TEXT DEFAULT '[]',
             FOREIGN KEY(document_id) REFERENCES documents(id)
         );
 
@@ -55,3 +56,43 @@ def init_db():
             FOREIGN KEY(document_id) REFERENCES documents(id)
         );
         """)
+
+               # Safely upgrade databases created before fields_json existed.
+        columns = db.execute(
+            "PRAGMA table_info(invitations)"
+        ).fetchall()
+
+        column_names = [column["name"] for column in columns]
+
+        if "fields_json" not in column_names:
+            db.execute(
+                "ALTER TABLE invitations ADD COLUMN fields_json TEXT DEFAULT '[]'"
+            )
+
+        # Safely upgrade existing documents table.
+        columns = db.execute(
+            "PRAGMA table_info(documents)"
+        ).fetchall()
+
+        column_names = [column["name"] for column in columns]
+
+        if "signed_file_path" not in column_names:
+            db.execute(
+                "ALTER TABLE documents ADD COLUMN signed_file_path TEXT"
+            )
+
+                # Safely add History visibility setting.
+        columns = db.execute(
+            "PRAGMA table_info(documents)"
+        ).fetchall()
+
+        column_names = [column["name"] for column in columns]
+
+        if "hidden_from_history" not in column_names:
+            db.execute(
+                """ALTER TABLE documents
+                   ADD COLUMN hidden_from_history INTEGER DEFAULT 0"""
+            )
+
+        db.commit()
+        

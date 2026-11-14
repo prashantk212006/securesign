@@ -1,7 +1,8 @@
 
-# Frontend
-node_modules/
-dist/
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -9,23 +10,21 @@ __pycache__/
 venv/
 .venv/
 
-# Secrets and environment files
-.env
-.env.*
-!.env.example
+# Node
+node_modules/
+dist/
 
-# Database files
+# Local databases
 *.db
 *.sqlite
 *.sqlite3
 
-# Uploaded documents and generated files
-backend/uploads/*
-!backend/uploads/.gitkeep
-
-# Logs
+# Generated files
+backend/signed_documents/
+uploads/
 *.log
 
-# Operating system
+# IDE and operating system
+.vscode/
 .DS_Store
 Thumbs.db

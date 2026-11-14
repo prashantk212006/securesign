@@ -14,6 +14,8 @@ import {
   Loader2
 } from 'lucide-react';
 
+import PdfFieldEditor from '../components/PdfFieldEditor';
+
 export default function ClientSigning() {
   const { token } = useParams();
 
@@ -24,17 +26,23 @@ export default function ClientSigning() {
 
   const [documentUrl, setDocumentUrl] = useState(null);
   const [documentName, setDocumentName] = useState('');
+  const [fields, setFields] = useState([]);
+
   const [mode, setMode] = useState('draw');
-
   const [signerName, setSignerName] = useState('');
-
   const [consent, setConsent] = useState(false);
+
+  // Live signature and date preview
+  const [signatureImage, setSignatureImage] = useState('');
+  const [signedDate] = useState(
+    new Date().toLocaleDateString('en-IN')
+  );
   const [error, setError] = useState('');
   const [loadingDocument, setLoadingDocument] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
 
-  // Load and validate the invitation.
+  // Load invitation, assigned fields, and PDF.
   useEffect(() => {
     let active = true;
     let objectUrl = null;
@@ -63,7 +71,23 @@ export default function ClientSigning() {
           invitationData.title || 'Signing Document'
         );
 
-        // Fetch the PDF through the public token-based endpoint.
+        // Load fields allocated by the administrator.
+        let assignedFields = invitationData.fields || [];
+
+        // Support a JSON string as well as an array.
+        if (typeof assignedFields === 'string') {
+          try {
+            assignedFields = JSON.parse(assignedFields);
+          } catch {
+            assignedFields = [];
+          }
+        }
+
+        setFields(
+          Array.isArray(assignedFields) ? assignedFields : []
+        );
+
+        // Fetch the PDF using the public invitation token.
         const pdfResponse = await fetch(
           `${API_URL}/api/signatures/invitation/${encodeURIComponent(token)}/document`
         );
@@ -115,10 +139,11 @@ export default function ClientSigning() {
   // Clear drawn signature.
   const clearSignature = () => {
     signatureRef.current?.clear();
+    setSignatureImage('');
     setError('');
   };
 
-  // Convert the signer's name into a PNG signature image.
+  // Convert typed name into a PNG image.
   const createTypedSignature = (name) => {
     const canvas = document.createElement('canvas');
 
@@ -137,7 +162,7 @@ export default function ClientSigning() {
     return canvas.toDataURL('image/png');
   };
 
-  // Submit signature to backend.
+  // Submit signature.
   const handleSubmit = async () => {
     setError('');
 
@@ -160,7 +185,6 @@ export default function ClientSigning() {
       }
 
       signature = signatureRef.current.toDataURL('image/png');
-
     } else {
       signature = createTypedSignature(signerName.trim());
     }
@@ -310,11 +334,28 @@ export default function ClientSigning() {
 
             ) : documentUrl ? (
 
-              <iframe
-                src={documentUrl}
-                title="Document preview"
-                className="w-full h-[650px]"
-              />
+              <div className="p-4">
+                <div className="mb-4 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <p className="text-sm text-blue-800">
+                    Please sign in the areas marked by the administrator.
+                    Your allocated signature and date fields are shown below.
+                  </p>
+                </div>
+
+                <PdfFieldEditor
+                  file={documentUrl}
+                  fields={fields}
+                  editable={false}
+                  signatureImage={signatureImage}
+                  signedDate={signedDate}
+                />
+
+                {fields.length === 0 && (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 mt-4">
+                    No signature or date fields were assigned to this document.
+                  </p>
+                )}
+              </div>
 
             ) : (
 
@@ -360,7 +401,14 @@ export default function ClientSigning() {
                 <input
                   type="text"
                   value={signerName}
-                  onChange={(e) => setSignerName(e.target.value)}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    setSignerName(name);
+
+                    setSignatureImage(
+                      name.trim() ? createTypedSignature(name.trim()) : ''
+                    );
+                  }}
                   placeholder="Enter your full legal name"
                   maxLength={120}
                   autoComplete="name"
@@ -382,11 +430,10 @@ export default function ClientSigning() {
                     setMode('draw');
                     setError('');
                   }}
-                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold ${
-                    mode === 'draw'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-slate-200 text-slate-600'
-                  }`}
+                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold ${mode === 'draw'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 text-slate-600'
+                    }`}
                 >
                   <PenLine size={17} />
                   Draw
@@ -398,11 +445,10 @@ export default function ClientSigning() {
                     setMode('type');
                     setError('');
                   }}
-                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold ${
-                    mode === 'type'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-slate-200 text-slate-600'
-                  }`}
+                  className={`flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold ${mode === 'type'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 text-slate-600'
+                    }`}
                 >
                   <Type size={17} />
                   Type
@@ -424,6 +470,13 @@ export default function ClientSigning() {
                     <SignatureCanvas
                       ref={signatureRef}
                       penColor="#172554"
+                      onEnd={() => {
+                        if (signatureRef.current && !signatureRef.current.isEmpty()) {
+                          setSignatureImage(
+                            signatureRef.current.toDataURL('image/png')
+                          );
+                        }
+                      }}
                       canvasProps={{
                         width: 500,
                         height: 190,
