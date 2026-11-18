@@ -9,10 +9,12 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 
-export default function Dashboard({ onNavigate }) {
+export default function Dashboard({ onNavigate, role }) {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const isSuperAdmin = role === 'super_admin';
 
   useEffect(() => {
     let active = true;
@@ -50,9 +52,10 @@ export default function Dashboard({ onNavigate }) {
 
             return {
               ...doc,
-              displayName: doc.title && doc.title !== 'string'
-                ? doc.title
-                : doc.filename || `Document ${doc.id}`,
+              displayName:
+                doc.title && doc.title !== 'string'
+                  ? doc.title
+                  : doc.filename || `Document ${doc.id}`,
               client: signerName,
               date: doc.created_at
                 ? new Date(doc.created_at).toLocaleDateString()
@@ -61,9 +64,12 @@ export default function Dashboard({ onNavigate }) {
           })
         );
 
-        if (active) setDocuments(enrichedDocuments);
+        if (active) {
+          setDocuments(enrichedDocuments);
+        }
       } catch (err) {
         console.error('Dashboard document loading error:', err);
+
         if (active) {
           setError(
             err.response?.status === 401
@@ -72,7 +78,9 @@ export default function Dashboard({ onNavigate }) {
           );
         }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
 
@@ -104,8 +112,11 @@ export default function Dashboard({ onNavigate }) {
           <h2 className="text-2xl font-bold text-slate-900">
             Overview
           </h2>
+
           <p className="mt-1 text-sm text-slate-500">
-            Monitor your document signing activity.
+            {isSuperAdmin
+              ? 'Monitor document signing activity across all administrators.'
+              : 'Monitor your document signing activity.'}
           </p>
         </div>
 
@@ -130,8 +141,12 @@ export default function Dashboard({ onNavigate }) {
             <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
               <FileText size={23} />
             </div>
+
             <div>
-              <p className="text-sm text-slate-500">Total Documents</p>
+              <p className="text-sm text-slate-500">
+                Total Documents
+              </p>
+
               <p className="text-2xl font-bold text-slate-900">
                 {loading ? '...' : documents.length}
               </p>
@@ -144,8 +159,12 @@ export default function Dashboard({ onNavigate }) {
             <div className="rounded-xl bg-green-50 p-3 text-green-600">
               <Activity size={23} />
             </div>
+
             <div>
-              <p className="text-sm text-slate-500">Signed Documents</p>
+              <p className="text-sm text-slate-500">
+                Signed Documents
+              </p>
+
               <p className="text-2xl font-bold text-slate-900">
                 {loading ? '...' : signedCount}
               </p>
@@ -158,8 +177,12 @@ export default function Dashboard({ onNavigate }) {
             <div className="rounded-xl bg-orange-50 p-3 text-orange-600">
               <FileText size={23} />
             </div>
+
             <div>
-              <p className="text-sm text-slate-500">Pending Documents</p>
+              <p className="text-sm text-slate-500">
+                Pending Documents
+              </p>
+
               <p className="text-2xl font-bold text-slate-900">
                 {loading ? '...' : pendingCount}
               </p>
@@ -174,6 +197,7 @@ export default function Dashboard({ onNavigate }) {
             <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
               <FileText size={23} />
             </div>
+
             <h3 className="font-semibold text-slate-800">
               Document Management
             </h3>
@@ -196,6 +220,7 @@ export default function Dashboard({ onNavigate }) {
             <div className="rounded-xl bg-purple-50 p-3 text-purple-600">
               <Activity size={23} />
             </div>
+
             <h3 className="font-semibold text-slate-800">
               Signing Activity
             </h3>
@@ -220,6 +245,7 @@ export default function Dashboard({ onNavigate }) {
             <h3 className="text-lg font-bold text-slate-900">
               Recent Documents
             </h3>
+
             <p className="mt-1 text-sm text-slate-500">
               Latest document activity
             </p>
@@ -238,6 +264,11 @@ export default function Dashboard({ onNavigate }) {
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-6 py-4">Document</th>
+
+                {isSuperAdmin && (
+                  <th className="px-6 py-4">Owner / Admin</th>
+                )}
+
                 <th className="px-6 py-4">Signer</th>
                 <th className="px-6 py-4">Date sent</th>
                 <th className="px-6 py-4">Status</th>
@@ -247,23 +278,32 @@ export default function Dashboard({ onNavigate }) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="4" className="px-6 py-12 text-center text-slate-500">
+                  <td
+                    colSpan={isSuperAdmin ? 5 : 4}
+                    className="px-6 py-12 text-center text-slate-500"
+                  >
                     Loading documents...
                   </td>
                 </tr>
               ) : documents.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="px-6 py-16 text-center">
+                  <td
+                    colSpan={isSuperAdmin ? 5 : 4}
+                    className="px-6 py-16 text-center"
+                  >
                     <FileText
                       size={42}
                       className="mx-auto mb-4 text-slate-300"
                     />
+
                     <h3 className="font-semibold text-slate-700">
                       No documents yet
                     </h3>
+
                     <p className="mt-2 text-sm text-slate-500">
                       Documents will appear here after they are uploaded.
                     </p>
+
                     <button
                       onClick={() => onNavigate('send')}
                       className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-100"
@@ -278,16 +318,34 @@ export default function Dashboard({ onNavigate }) {
                     <td className="px-6 py-4 text-sm font-medium text-slate-800">
                       {doc.displayName}
                     </td>
+
+                    {isSuperAdmin && (
+                      <td className="px-6 py-4 text-sm text-slate-600">
+                        <div className="font-medium text-slate-800">
+                          {doc.owner_name || 'Unknown Admin'}
+                        </div>
+
+                        <div className="text-xs text-slate-500">
+                          {doc.owner_email || ''}
+                        </div>
+                      </td>
+                    )}
+
                     <td className="px-6 py-4 text-sm text-slate-600">
                       {doc.client}
                     </td>
+
                     <td className="px-6 py-4 text-sm text-slate-600">
                       {doc.date}
                     </td>
+
                     <td className="px-6 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        statusStyle[doc.status] || 'bg-slate-100 text-slate-600'
-                      }`}>
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          statusStyle[doc.status] ||
+                          'bg-slate-100 text-slate-600'
+                        }`}
+                      >
                         {doc.status || 'Pending'}
                       </span>
                     </td>

@@ -28,3 +28,8 @@ uploads/
 .vscode/
 .DS_Store
 Thumbs.db
+
+
+# SecureSign uploaded documents
+backend/uploads/
+backend/signed_documents/

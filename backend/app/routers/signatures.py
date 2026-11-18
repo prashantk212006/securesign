@@ -2,22 +2,20 @@
 import os
 import secrets
 import html
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-import json
-import httpx
-from dotenv import load_dotenv
-
-import smtplib
-from email.message import EmailMessage
-
 import base64
 import re
-import pymupdf
+import json
+import smtplib
 
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from email.message import EmailMessage
+
+import pymupdf
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.database import get_connection
 from app.core.dependencies import get_current_user
@@ -27,7 +25,6 @@ from app.core.dependencies import get_current_user
 # LOAD ENVIRONMENT VARIABLES
 # --------------------------------------------------
 
-# Load backend/.env using an absolute path.
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_FILE = BACKEND_DIR / ".env"
 
@@ -46,7 +43,6 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
     if not original_path.is_file():
         raise HTTPException(404, "Original PDF file not found")
 
-    # Extract and validate the base64 signature image.
     match = re.fullmatch(
         r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=\s]+)",
         signature_data_url
@@ -63,7 +59,6 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
     except Exception:
         raise HTTPException(400, "Could not decode signature image")
 
-    # Retrieve the positions saved by the admin.
     try:
         fields = json.loads(invitation["fields_json"] or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -72,7 +67,6 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
     if not isinstance(fields, list) or not fields:
         raise HTTPException(400, "No signing fields were assigned")
 
-    # Use the server's signing date.
     signed_date = datetime.fromisoformat(
         signed_at
     ).strftime("%d-%m-%Y")
@@ -83,6 +77,8 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
     output_path = output_dir / f"document_{document['id']}_signed.pdf"
     temp_path = output_dir / f"document_{document['id']}_signed.tmp.pdf"
 
+    pdf = None
+
     try:
         pdf = pymupdf.open(original_path)
 
@@ -90,7 +86,6 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
 
         for field in fields:
             field_type = str(field.get("type", "")).lower()
-
             page_number = int(field.get("page", 1))
 
             if page_number < 1 or page_number > len(pdf):
@@ -103,7 +98,6 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
             width = float(field["width"])
             height = float(field["height"])
 
-            # Coordinates are normalized from 0 to 1.
             if (
                 x < 0 or y < 0 or width <= 0 or height <= 0
                 or x + width > 1 or y + height > 1
@@ -144,6 +138,7 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
 
         pdf.save(temp_path, garbage=4, deflate=True)
         pdf.close()
+        pdf = None
 
         os.replace(temp_path, output_path)
 
@@ -153,6 +148,9 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
         raise
 
     except Exception as error:
+        if pdf is not None:
+            pdf.close()
+
         if temp_path.exists():
             temp_path.unlink()
 
@@ -162,21 +160,18 @@ def generate_signed_pdf(document, invitation, signature_data_url, signed_at):
         )
 
 
-
 # --------------------------------------------------
 # REQUEST MODELS
 # --------------------------------------------------
 
 class InvitationRequest(BaseModel):
     recipient_email: EmailStr | None = None
-    fields: list[dict] = []
+    fields: list[dict] = Field(default_factory=list)
 
 
 class SignRequest(BaseModel):
     signer_name: str
     signature_text: str
-
-
 
 
 # --------------------------------------------------
@@ -257,7 +252,6 @@ def send_signing_email(recipient_email, document_title, signing_url):
         )
 
 
-
 # --------------------------------------------------
 # SEND SIGNED PDF TO RECIPIENT USING GMAIL
 # --------------------------------------------------
@@ -314,11 +308,10 @@ def send_signed_document_email(recipient_email, document_title, signed_pdf_path)
         print("SIGNED PDF EMAIL ERROR:", str(error))
         return False
 
+
 # --------------------------------------------------
 # CREATE SIGNING INVITATION
 # --------------------------------------------------
-
-
 
 @router.post("/invite/{document_id}")
 def create_invitation(
@@ -326,7 +319,7 @@ def create_invitation(
     data: InvitationRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    # Check Gmail SMTP credentials before creating the invitation.
+
     if data.recipient_email and (
         not os.getenv("SMTP_EMAIL")
         or not os.getenv("SMTP_APP_PASSWORD")
@@ -339,14 +332,21 @@ def create_invitation(
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
 
-    # Convert admin-assigned PDF fields into JSON.
     fields_json = json.dumps(data.fields)
 
     with get_connection() as db:
-        document = db.execute(
-            "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
-            (document_id, current_user["id"])
-        ).fetchone()
+
+        # Super Admin can create invitations for any administrator's document.
+        if current_user["role"] == "super_admin":
+            document = db.execute(
+                "SELECT * FROM documents WHERE id = ?",
+                (document_id,)
+            ).fetchone()
+        else:
+            document = db.execute(
+                "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+                (document_id, current_user["id"])
+            ).fetchone()
 
         if not document:
             raise HTTPException(404, "Document not found")
@@ -376,7 +376,6 @@ def create_invitation(
 
     signing_url = f"{frontend_url}/sign/{token}"
 
-    # Send actual email if recipient address is provided.
     if data.recipient_email:
         try:
             send_signing_email(
@@ -394,6 +393,20 @@ def create_invitation(
                 db.commit()
 
             raise
+        
+                # Update document after successful email delivery.
+        with get_connection() as db:
+            db.execute(
+                """
+                UPDATE documents
+                SET status = 'Pending',
+                    workflow_stage = 'invitation_sent',
+                    draft_fields_json = ?
+                WHERE id = ?
+                """,
+                (fields_json, document_id)
+            )
+            db.commit()
 
         return {
             "message": "Signing invitation sent successfully by email.",
@@ -411,10 +424,10 @@ def create_invitation(
         "expires_in_hours": 24
     }
 
+
 # --------------------------------------------------
 # VALIDATE SIGNING INVITATION
 # --------------------------------------------------
-
 
 @router.get("/invitation/{token}")
 def validate_invitation(token: str):
@@ -432,22 +445,21 @@ def validate_invitation(token: str):
         if invitation["used_at"]:
             raise HTTPException(400, "Signing link already used")
 
-        expires_at = datetime.fromisoformat(
-            invitation["expires_at"]
-        )
+        expires_at = datetime.fromisoformat(invitation["expires_at"])
 
         if expires_at < datetime.now(timezone.utc):
             raise HTTPException(400, "Signing link expired")
 
+        # This is a public client endpoint.
+        # Access is verified through the unique invitation token.
         document = db.execute(
-            "SELECT id, title, status FROM documents WHERE id = ?",
+            "SELECT * FROM documents WHERE id = ?",
             (invitation["document_id"],)
         ).fetchone()
 
         if not document or document["status"] == "Signed":
             raise HTTPException(400, "Document cannot be signed")
 
-        # Retrieve the admin-assigned PDF fields.
         try:
             fields = json.loads(invitation["fields_json"] or "[]")
         except (json.JSONDecodeError, TypeError):
@@ -479,9 +491,7 @@ def view_invitation_document(token: str):
         if invitation["used_at"]:
             raise HTTPException(400, "Signing link already used")
 
-        expires_at = datetime.fromisoformat(
-            invitation["expires_at"]
-        )
+        expires_at = datetime.fromisoformat(invitation["expires_at"])
 
         if expires_at < datetime.now(timezone.utc):
             raise HTTPException(400, "Signing link expired")
@@ -512,7 +522,6 @@ def view_invitation_document(token: str):
 # SUBMIT DIGITAL SIGNATURE
 # --------------------------------------------------
 
-
 @router.post("/invitation/{token}/sign")
 def sign_document(token: str, data: SignRequest):
 
@@ -535,9 +544,7 @@ def sign_document(token: str, data: SignRequest):
         if invitation["used_at"]:
             raise HTTPException(400, "Signing link already used")
 
-        expires_at = datetime.fromisoformat(
-            invitation["expires_at"]
-        )
+        expires_at = datetime.fromisoformat(invitation["expires_at"])
 
         if expires_at < datetime.now(timezone.utc):
             raise HTTPException(400, "Signing link expired")
@@ -550,10 +557,8 @@ def sign_document(token: str, data: SignRequest):
         if not document or document["status"] == "Signed":
             raise HTTPException(400, "Document cannot be signed")
 
-        # Generate the server-side signing timestamp.
         signed_at = datetime.now(timezone.utc).isoformat()
 
-        # Create the final PDF before marking the document as Signed.
         signed_pdf_path = generate_signed_pdf(
             document,
             invitation,
@@ -561,7 +566,6 @@ def sign_document(token: str, data: SignRequest):
             signed_at
         )
 
-        # Save the signature record.
         db.execute(
             """INSERT INTO signatures
                (document_id, signer_name, signature_text, signed_at)
@@ -574,26 +578,23 @@ def sign_document(token: str, data: SignRequest):
             )
         )
 
-        # Mark the invitation as used.
         db.execute(
             "UPDATE invitations SET used_at = ? WHERE id = ?",
             (signed_at, invitation["id"])
         )
 
-        # Save the signed PDF path and update document status.
         db.execute(
             """UPDATE documents
-               SET status = 'Signed', signed_file_path = ?
+               SET status = 'Signed',
+                   workflow_stage = 'signed',
+                   signed_file_path = ?
                WHERE id = ?""",
             (signed_pdf_path, document["id"])
-        )
+        )        
 
         db.commit()
 
-    
-    # Send the completed signed PDF to the recipient.
     email_sent = False
-
     recipient_email = invitation["recipient_email"]
 
     if recipient_email:
@@ -611,7 +612,6 @@ def sign_document(token: str, data: SignRequest):
     }
 
 
-
 # --------------------------------------------------
 # GET SIGNATURES FOR A DOCUMENT
 # --------------------------------------------------
@@ -624,10 +624,17 @@ def get_document_signatures(
 
     with get_connection() as db:
 
-        document = db.execute(
-            "SELECT id FROM documents WHERE id = ? AND owner_id = ?",
-            (document_id, current_user["id"])
-        ).fetchone()
+        # Super Admin can view signatures for every document.
+        if current_user["role"] == "super_admin":
+            document = db.execute(
+                "SELECT id FROM documents WHERE id = ?",
+                (document_id,)
+            ).fetchone()
+        else:
+            document = db.execute(
+                "SELECT id FROM documents WHERE id = ? AND owner_id = ?",
+                (document_id, current_user["id"])
+            ).fetchone()
 
         if not document:
             raise HTTPException(404, "Document not found")
@@ -644,6 +651,7 @@ def get_document_signatures(
         for signature in signatures
     ]
 
+
 # --------------------------------------------------
 # DOWNLOAD SIGNED PDF (ADMIN ONLY)
 # --------------------------------------------------
@@ -653,15 +661,28 @@ def download_signed_document(
     document_id: int,
     current_user: dict = Depends(get_current_user)
 ):
+
     with get_connection() as db:
-        document = db.execute(
-            """
-            SELECT id, signed_file_path, status
-            FROM documents
-            WHERE id = ? AND owner_id = ?
-            """,
-            (document_id, current_user["id"])
-        ).fetchone()
+
+        # Super Admin can download any administrator's signed document.
+        if current_user["role"] == "super_admin":
+            document = db.execute(
+                """
+                SELECT id, signed_file_path, status
+                FROM documents
+                WHERE id = ?
+                """,
+                (document_id,)
+            ).fetchone()
+        else:
+            document = db.execute(
+                """
+                SELECT id, signed_file_path, status
+                FROM documents
+                WHERE id = ? AND owner_id = ?
+                """,
+                (document_id, current_user["id"])
+            ).fetchone()
 
     if not document:
         raise HTTPException(404, "Document not found")

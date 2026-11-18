@@ -18,7 +18,7 @@ import {
 
 import api from '../services/api';
 
-export default function History({ onBack }) {
+export default function History({ onBack, role }) {
   const [records, setRecords] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
@@ -26,16 +26,22 @@ export default function History({ onBack }) {
   const [isResetting, setIsResetting] = useState(false);
   const [error, setError] = useState('');
 
+  const isSuperAdmin = role === 'super_admin';
+
   // Load document history from the backend.
   const loadHistory = async () => {
     try {
       setError('');
+
       const response = await api.get('/documents/history');
-      setRecords(response.data);
+
+      setRecords(
+        Array.isArray(response.data) ? response.data : []
+      );
     } catch (err) {
       setError(
         err.response?.data?.detail ||
-          'Unable to load document history.'
+        'Unable to load document history.'
       );
     } finally {
       setIsLoading(false);
@@ -49,7 +55,6 @@ export default function History({ onBack }) {
 
   // Determine the current document status.
   const getDocumentStatus = (record) => {
-    // These statuses must take priority over expiry calculations.
     if (
       record.status === 'Signed' ||
       record.status === 'Rejected' ||
@@ -85,7 +90,7 @@ export default function History({ onBack }) {
     return parsedDate.toLocaleString('en-GB');
   };
 
-  // Display the remaining invitation time.
+  // Display remaining invitation time.
   const getExpiryMessage = (expiresAt) => {
     if (!expiresAt) return 'Not available';
 
@@ -120,11 +125,11 @@ export default function History({ onBack }) {
     setSearch('');
     setStatus('All');
     setIsResetting(true);
+    setIsLoading(true);
     loadHistory();
   };
 
   // Hide a document from History only.
-  // The original document remains available on Dashboard.
   const handleHideFromHistory = async (record) => {
     try {
       setError('');
@@ -141,7 +146,7 @@ export default function History({ onBack }) {
     } catch (err) {
       setError(
         err.response?.data?.detail ||
-          'Unable to remove document from History.'
+        'Unable to remove document from History.'
       );
     }
   };
@@ -187,7 +192,7 @@ export default function History({ onBack }) {
     } catch (err) {
       setError(
         err.response?.data?.detail ||
-          'Unable to open this document.'
+        'Unable to open this document.'
       );
     }
   };
@@ -203,8 +208,8 @@ export default function History({ onBack }) {
       'Not sent',
 
     email: record.recipient_email || '—',
-    name: record.title,
-    sent: record.sent_at,
+    name: record.title || `Document ${record.id}`,
+    sent: record.sent_at || record.created_at,
     signed: record.signed_at,
     expiresAt: record.expires_at,
   }));
@@ -216,7 +221,9 @@ export default function History({ onBack }) {
     const matchesSearch =
       (record.client || '').toLowerCase().includes(query) ||
       (record.name || '').toLowerCase().includes(query) ||
-      (record.email || '').toLowerCase().includes(query);
+      (record.email || '').toLowerCase().includes(query) ||
+      (record.owner_name || '').toLowerCase().includes(query) ||
+      (record.owner_email || '').toLowerCase().includes(query);
 
     const matchesStatus =
       status === 'All' || record.currentStatus === status;
@@ -278,11 +285,12 @@ export default function History({ onBack }) {
     },
   ];
 
+  const totalColumns = isSuperAdmin ? 8 : 7;
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="mx-auto max-w-7xl">
 
-        {/* Back button */}
         <button
           onClick={onBack}
           className="mb-7 flex items-center gap-2 text-slate-500 hover:text-blue-600"
@@ -291,7 +299,6 @@ export default function History({ onBack }) {
           Back to Dashboard
         </button>
 
-        {/* Page heading */}
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">
@@ -299,7 +306,9 @@ export default function History({ onBack }) {
             </h1>
 
             <p className="mt-2 text-slate-500">
-              Monitor document signing activity and invitation expiry.
+              {isSuperAdmin
+                ? 'Monitor document signing activity across all administrators.'
+                : 'Monitor document signing activity and invitation expiry.'}
             </p>
           </div>
 
@@ -318,14 +327,12 @@ export default function History({ onBack }) {
           </div>
         </div>
 
-        {/* Error message */}
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        {/* Summary cards */}
         <div className="mb-7 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
           {summary.map((item) => {
             const Icon = item.icon;
@@ -353,7 +360,6 @@ export default function History({ onBack }) {
           })}
         </div>
 
-        {/* Invitation expiry information */}
         <div className="mb-7 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4">
           <Timer
             className="mt-0.5 shrink-0 text-blue-600"
@@ -372,10 +378,8 @@ export default function History({ onBack }) {
           </div>
         </div>
 
-        {/* History table container */}
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
 
-          {/* Search and filters */}
           <div className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-lg font-bold">
@@ -389,7 +393,6 @@ export default function History({ onBack }) {
 
             <div className="flex flex-col gap-3 sm:flex-row">
 
-              {/* Search */}
               <div className="relative">
                 <Search
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
@@ -399,12 +402,11 @@ export default function History({ onBack }) {
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search documents or clients"
+                  placeholder="Search documents, clients or admins"
                   className="w-full rounded-xl border border-slate-200 py-3 pl-10 pr-4 text-sm outline-none focus:border-blue-500 sm:w-64"
                 />
               </div>
 
-              {/* Status filter */}
               <div className="relative">
                 <Filter
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
@@ -426,7 +428,6 @@ export default function History({ onBack }) {
                 </select>
               </div>
 
-              {/* Reset */}
               <button
                 onClick={handleReset}
                 disabled={isResetting}
@@ -442,19 +443,23 @@ export default function History({ onBack }) {
             </div>
           </div>
 
-          {/* Documents table */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1100px] text-left">
 
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  <th className="px-6 py-4">Document</th>
-                  <th className="px-6 py-4">Client Details</th>
-                  <th className="px-6 py-4">Date Sent</th>
-                  <th className="px-6 py-4">Date Signed</th>
-                  <th className="px-6 py-4">Expires At</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4">Actions</th>
+                  <th className="px-3 py-4">Document</th>
+
+                  {isSuperAdmin && (
+                    <th className="px-3 py-4">Owner / Admin</th>
+                  )}
+
+                  <th className="px-3 py-4">Client Details</th>
+                  <th className="px-3 py-4">Date Sent</th>
+                  <th className="px-3 py-4">Date Signed</th>
+                  <th className="px-3 py-4">Expires At</th>
+                  <th className="px-3 py-4">Status</th>
+                  <th className="px-3 py-4">Actions</th>
                 </tr>
               </thead>
 
@@ -466,8 +471,7 @@ export default function History({ onBack }) {
                     className="hover:bg-slate-50"
                   >
 
-                    {/* Document name */}
-                    <td className="px-6 py-5">
+                    <td className="px-3 py-4">
                       <div className="flex items-center gap-3">
                         <FileText
                           className="shrink-0 text-blue-600"
@@ -480,8 +484,19 @@ export default function History({ onBack }) {
                       </div>
                     </td>
 
-                    {/* Client details */}
-                    <td className="px-6 py-5">
+                    {isSuperAdmin && (
+                      <td className="px-3 py-4">
+                        <p className="text-sm font-semibold text-slate-800">
+                          {record.owner_name || 'Unknown Admin'}
+                        </p>
+
+                        <p className="text-xs text-slate-500">
+                          {record.owner_email || '—'}
+                        </p>
+                      </td>
+                    )}
+
+                    <td className="px-3 py-4">
                       <p className="text-sm font-semibold">
                         {record.client}
                       </p>
@@ -491,34 +506,30 @@ export default function History({ onBack }) {
                       </p>
                     </td>
 
-                    {/* Date sent */}
-                    <td className="px-6 py-5 text-sm text-slate-500">
+                    <td className="px-3 py-4 text-sm text-slate-500">
                       {formatDate(record.sent)}
                     </td>
 
-                    {/* Date signed */}
-                    <td className="px-6 py-5 text-sm text-slate-500">
+                    <td className="px-3 py-4 text-sm text-slate-500">
                       {formatDate(record.signed)}
                     </td>
 
-                    {/* Expiry date */}
-                    <td className="px-6 py-5">
+                    <td className="px-3 py-4">
                       <p className="text-sm text-slate-700">
                         {formatDate(record.expiresAt)}
                       </p>
 
                       {(record.currentStatus === 'Pending' ||
                         record.currentStatus === 'Expiring Soon') && (
-                        <p
-                          className={`mt-1 text-xs ${
-                            record.currentStatus === 'Expiring Soon'
+                          <p
+                            className={`mt-1 text-xs ${record.currentStatus === 'Expiring Soon'
                               ? 'font-semibold text-amber-600'
                               : 'text-slate-500'
-                          }`}
-                        >
-                          {getExpiryMessage(record.expiresAt)}
-                        </p>
-                      )}
+                              }`}
+                          >
+                            {getExpiryMessage(record.expiresAt)}
+                          </p>
+                        )}
 
                       {record.currentStatus === 'Terminated' && (
                         <p className="mt-1 text-xs font-semibold text-red-600">
@@ -527,13 +538,11 @@ export default function History({ onBack }) {
                       )}
                     </td>
 
-                    {/* Status badge */}
-                    <td className="px-6 py-5">
+                    <td className="px-3 py-4">
                       <span
-                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold ${
-                          statusStyle[record.currentStatus] ||
+                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold ${statusStyle[record.currentStatus] ||
                           'bg-slate-100 text-slate-600'
-                        }`}
+                          }`}
                       >
                         {record.currentStatus === 'Expiring Soon' && (
                           <AlertTriangle size={13} />
@@ -543,56 +552,55 @@ export default function History({ onBack }) {
                       </span>
                     </td>
 
+
                     {/* Actions */}
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-3">
+                    <td className="px-6 py-5 w-[150px]">
+                      <div className="grid grid-cols-3 items-center justify-items-center gap-2 w-[110px]">
 
                         {/* View document */}
                         <button
                           type="button"
                           title="View document"
                           onClick={() => openDocument(record, 'view')}
-                          className="text-blue-600 hover:text-blue-800"
+                          className="flex h-8 w-8 items-center justify-center text-blue-600 hover:text-blue-800"
                         >
                           <Eye size={19} />
                         </button>
 
                         {/* Download signed document */}
-                        {record.currentStatus === 'Signed' && (
+                        {record.currentStatus === 'Signed' ? (
                           <button
                             type="button"
                             title="Download document"
-                            onClick={() =>
-                              openDocument(record, 'download')
-                            }
-                            className="text-green-600 hover:text-green-800"
+                            onClick={() => openDocument(record, 'download')}
+                            className="flex h-8 w-8 items-center justify-center text-green-600 hover:text-green-800"
                           >
                             <Download size={19} />
                           </button>
+                        ) : (
+                          <span className="h-8 w-8" aria-hidden="true" />
                         )}
 
                         {/* Hide from History */}
                         <button
                           type="button"
                           title="Remove from History"
-                          onClick={() =>
-                            handleHideFromHistory(record)
-                          }
-                          className="text-red-500 hover:text-red-700"
+                          onClick={() => handleHideFromHistory(record)}
+                          className="flex h-8 w-8 items-center justify-center text-red-500 hover:text-red-700"
                         >
                           <Trash2 size={19} />
                         </button>
 
                       </div>
                     </td>
+
                   </tr>
                 ))}
 
-                {/* Loading state */}
                 {isLoading && (
                   <tr>
                     <td
-                      colSpan="7"
+                      colSpan={totalColumns}
                       className="py-16 text-center text-slate-500"
                     >
                       Loading document history...
@@ -600,10 +608,12 @@ export default function History({ onBack }) {
                   </tr>
                 )}
 
-                {/* Empty state */}
                 {!isLoading && filteredRecords.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="py-16 text-center">
+                    <td
+                      colSpan={totalColumns}
+                      className="py-16 text-center"
+                    >
                       <FileText
                         size={42}
                         className="mx-auto mb-4 text-slate-300"
@@ -628,7 +638,6 @@ export default function History({ onBack }) {
             </table>
           </div>
 
-          {/* Footer */}
           <div className="border-t border-slate-100 px-6 py-4 text-sm text-slate-500">
             Showing {filteredRecords.length} of {records.length} records
           </div>

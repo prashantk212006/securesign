@@ -6,17 +6,31 @@ import {
   Settings,
   LogOut,
   FileSignature,
-  ShieldCheck,
+  Users,
+  ClipboardList,
 } from 'lucide-react';
 
-export default function Sidebar({ activePage, onNavigate, onLogout }) {
+export default function Sidebar({
+  activePage,
+  onNavigate,
+  onLogout,
+  role,
+}) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'send', label: 'Send Document', icon: Send },
+    { id: 'pending', label: 'Pending Requests', icon: ClipboardList },
     { id: 'history', label: 'Document History', icon: History },
-    { id: 'audit', label: 'Audit Trail', icon: ShieldCheck },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  if (role === 'super_admin') {
+    menuItems.push({
+      id: 'admins',
+      label: 'Admin Management',
+      icon: Users,
+    });
+  }
 
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col bg-slate-950 text-white">
@@ -44,11 +58,10 @@ export default function Sidebar({ activePage, onNavigate, onLogout }) {
               <button
                 key={item.id}
                 onClick={() => onNavigate(item.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
-                  active
+                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${active
                     ? 'bg-blue-600 text-white'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
+                  }`}
               >
                 <Icon size={19} />
                 {item.label}

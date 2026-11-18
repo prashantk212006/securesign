@@ -18,7 +18,7 @@ import {
 import PdfFieldEditor from '../components/PdfFieldEditor';
 import api from '../services/api';
 
-export default function SendDocument({ onBack }) {
+export default function SendDocument({ onBack, draftId }) {
   const [file, setFile] = useState(null);
   const [documentTitle, setDocumentTitle] = useState('');
   const [clientName, setClientName] = useState('');
@@ -31,6 +31,56 @@ export default function SendDocument({ onBack }) {
 
   const [previewUrl, setPreviewUrl] = useState('');
   const [fields, setFields] = useState([]);
+
+  const [isLoadingDraft, setIsLoadingDraft] = useState(false);
+
+  const [activeDraftId, setActiveDraftId] = useState(draftId || null);
+
+  useEffect(() => {
+    if (!activeDraftId) return;
+
+    const loadDraft = async () => {
+      try {
+        setIsLoadingDraft(true);
+        setError('');
+
+        // Retrieve saved draft details.
+        const response = await api.get(`/documents/drafts/${activeDraftId}`);
+        const draft = response.data;
+
+        // Retrieve the original PDF.
+        const pdfResponse = await api.get(
+          `/documents/${activeDraftId}/view`,
+          { responseType: 'blob' }
+        );
+
+        const pdfFile = new File(
+          [pdfResponse.data],
+          draft.filename || `${draft.title}.pdf`,
+          { type: 'application/pdf' }
+        );
+
+        setFile(pdfFile);
+        setDocumentTitle(draft.title || '');
+        setClientName(draft.recipient_name || '');
+        setEmail(draft.recipient_email || '');
+        setMessage(draft.message || '');
+        setFields(draft.fields || []);
+
+      } catch (err) {
+        console.error('Load Draft Error:', err);
+        setError(
+          err.response?.data?.detail ||
+          'Unable to load this draft.'
+        );
+      } finally {
+        setIsLoadingDraft(false);
+      }
+    };
+
+    loadDraft();
+  }, [activeDraftId]);
+
 
   // Create and clean up PDF preview URL.
   useEffect(() => {
@@ -93,7 +143,75 @@ export default function SendDocument({ onBack }) {
     setError('');
   };
 
-  // Upload PDF and send signing invitation.
+
+
+
+  const handleSaveDraft = async () => {
+    setError('');
+
+    if (!file) {
+      setError('Please upload a PDF before saving the draft.');
+      return;
+    }
+
+    if (!documentTitle.trim()) {
+      setError('Please enter a document title.');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      const draftData = new FormData();
+
+      draftData.append('title', documentTitle.trim());
+      draftData.append('file', file);
+      draftData.append('recipient_name', clientName.trim());
+      draftData.append('recipient_email', email.trim());
+      draftData.append('message', message);
+      draftData.append('fields_json', JSON.stringify(fields));
+      draftData.append(
+        'workflow_stage',
+        fields.length > 0 ? 'fields_placed' :
+          (clientName.trim() || email.trim())
+            ? 'details_completed'
+            : 'uploaded'
+      );
+
+      if (activeDraftId) {
+        await api.put(
+          `/documents/drafts/${activeDraftId}`,
+          draftData
+        );
+      } else {
+        const response = await api.post(
+          '/documents/drafts',
+          draftData
+        );
+
+        setActiveDraftId(response.data.id);
+      }
+
+      setError('');
+      alert('Draft saved successfully!');
+
+    } catch (err) {
+      console.error('Save Draft Error:', err);
+
+      setError(
+        err.response?.data?.detail ||
+        'Unable to save draft. Please try again.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+
+
+
+
+  // Save document as a draft and send signing invitation.
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -115,26 +233,43 @@ export default function SendDocument({ onBack }) {
     try {
       setIsSubmitting(true);
 
-      // STEP 1: Upload PDF to backend.
-      const uploadData = new FormData();
+      // STEP 1: Prepare document data.
+      let documentId = activeDraftId;
 
-      uploadData.append('file', file);
-      uploadData.append('title', documentTitle.trim());
+      const draftData = new FormData();
 
-      const uploadResponse = await api.post(
-        '/documents/upload',
-        uploadData
-      );
+      draftData.append('title', documentTitle.trim());
+      draftData.append('recipient_name', clientName.trim());
+      draftData.append('recipient_email', email.trim());
+      draftData.append('message', message);
+      draftData.append('fields_json', JSON.stringify(fields));
+      draftData.append('workflow_stage', 'fields_placed');
 
-      const documentId = uploadResponse.data.id;
+      // STEP 2: Create a new draft or update an existing one.
+      if (activeDraftId) {
+        await api.put(
+          `/documents/drafts/${activeDraftId}`,
+          draftData
+        );
+      } else {
+        draftData.append('file', file);
+
+        const draftResponse = await api.post(
+          '/documents/drafts',
+          draftData
+        );
+
+        documentId = draftResponse.data.id;
+        setActiveDraftId(documentId);
+      }
 
       if (!documentId) {
         throw new Error(
-          'PDF uploaded, but the backend did not return a document ID.'
+          'Unable to save document. No document ID was returned.'
         );
       }
 
-      // STEP 2: Create invitation and send email.
+      // STEP 3: Create invitation and send email.
       const invitationResponse = await api.post(
         `/signatures/invite/${documentId}`,
         {
@@ -149,7 +284,7 @@ export default function SendDocument({ onBack }) {
         );
       }
 
-      // STEP 3: Display success only after email confirmation.
+      // STEP 4: Display success.
       setSuccess(true);
 
     } catch (err) {
@@ -165,6 +300,7 @@ export default function SendDocument({ onBack }) {
       setIsSubmitting(false);
     }
   };
+
 
   // Reset form.
   const resetForm = () => {
@@ -527,24 +663,31 @@ export default function SendDocument({ onBack }) {
 
             )}
 
-            {/* SUBMIT BUTTON */}
-            <div className="flex justify-end">
+
+            {/* SUBMIT BUTTONS */}
+            <div className="flex flex-col sm:flex-row justify-end gap-3">
+
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                disabled={isSubmitting}
+                className="bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-60 text-slate-700 px-8 py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2"
+              >
+                <FileText size={18} />
+                {isSubmitting ? 'Saving...' : 'Save Draft'}
+              </button>
 
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-8 py-3.5 rounded-xl font-semibold flex items-center gap-2"
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-8 py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2"
               >
-
                 <Send size={18} />
-
-                {isSubmitting
-                  ? 'Uploading and Sending...'
-                  : 'Send Document'}
-
+                {isSubmitting ? 'Uploading and Sending...' : 'Send Document'}
               </button>
 
             </div>
+
 
           </form>
 

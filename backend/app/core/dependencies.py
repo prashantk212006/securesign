@@ -23,15 +23,33 @@ def get_current_user(
     try:
         user_id = int(payload["sub"])
     except (ValueError, TypeError):
-        raise HTTPException(401, "Invalid authentication credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials"
+        )
 
     with get_connection() as db:
         user = db.execute(
-            "SELECT id, name, email FROM users WHERE id = ?",
+            """
+            SELECT id, name, email, role, is_active
+            FROM users
+            WHERE id = ?
+            """,
             (user_id,)
         ).fetchone()
 
     if not user:
-        raise HTTPException(401, "User not found")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
 
-    return dict(user)
+    user = dict(user)
+
+    if not user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been deactivated. Contact the Super Admin."
+        )
+
+    return user
